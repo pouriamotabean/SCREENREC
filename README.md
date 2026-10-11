@@ -5,9 +5,17 @@ screen (1080p, 30 fps, H.264 ~8 Mbps, GPU encoder when available) together with
 exactly what you hear on the master bus (music + monitored mic), into one MP4
 with AAC 320 kbps audio.
 
-- Output: `Documents\ScreenRec\ScreenRec_YYYY-MM-DD_HH-MM-SS.mp4`
+- Output: `Documents\ScreenRec\ScreenRec_YYYY-MM-DD_HH-MM-SS.mp4` (FULL) or `Reels_....mp4` (REELS, 1080x1920)
 - Logs: `Documents\ScreenRec\logs\`
 - Sync offset (set by SYNC TEST): `Documents\ScreenRec\sync_offset_ms.txt`
+
+## REELS mode
+Select REELS: a 9:16 frame with a centre marker appears on screen. Top-left
+handle = move (mouse wheel = zoom, double-click = full height), top-right handle
+= zoom around the centre. Works live while recording; the video glides after the
+frame like a camera. The frame, handles and the plugin window are visible on the
+monitor but not in the recording (Windows 10 2004+). Clicks inside the frame go
+through to Cubase.
 
 ## Install
 Download the `ScreenRec-VST3` artifact from GitHub Actions, unzip, copy

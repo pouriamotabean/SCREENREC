@@ -1,11 +1,17 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ReelsOverlay.h"
 
 ScreenRecProcessor::ScreenRecProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+}
+
+ScreenRecProcessor::~ScreenRecProcessor()
+{
+    overlay.reset();
 }
 
 void ScreenRecProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)

@@ -44,6 +44,23 @@ public:
 
     static juce::File getOutputFolder();
 
+    //==== capture mode (message thread) ========================================
+    enum class Mode { full = 0, reels = 1 };
+    Mode getMode() const            { return (Mode) mode.load(); }
+    void setMode (Mode m);          // ignored while busy
+
+    // REELS frame: centre x (fraction of screen width), centre y and height
+    // (fractions of screen height). Read live by the capture thread.
+    void setReelsFrame (double cx, double cy, double h);
+    void getReelsFrame (double& cx, double& cy, double& h) const;
+    void saveSettings();
+
+    bool isBusy() const
+    {
+        const auto s = state.load();
+        return s == State::starting || s == State::recording || s == State::saving;
+    }
+
 private:
     void timerCallback() override;
 
@@ -64,6 +81,7 @@ private:
                              int64_t videoStartTicks, int64_t frameCount);
     double analyseSyncTest (const juce::File& alignedWav, const std::vector<float>& probe, int& pairsFound);
 
+    void loadSettings();
     void loadSyncOffset();
     void saveSyncOffset (double ms);
 
@@ -72,6 +90,8 @@ private:
     std::atomic<bool> syncTestMode { false };
     std::atomic<bool> audioActive { false };       // audio thread pushes while true
     std::atomic<double> syncOffsetMs { 0.0 };
+    std::atomic<int> mode { 0 };
+    std::atomic<double> reelsFrame[3] { { 0.5 }, { 0.5 }, { 1.0 } };
     std::atomic<double> currentSampleRate { 48000.0 };
     std::atomic<int> currentBlockSize { 512 };
     std::atomic<int64_t> captureStartTicks { 0 };

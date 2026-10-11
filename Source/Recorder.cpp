@@ -37,6 +37,7 @@ namespace
 Recorder::Recorder()
 {
     loadSyncOffset();
+    loadSettings();
     startTimerHz (20);
 }
 
@@ -422,7 +423,7 @@ void Recorder::runStart (bool syncTest, juce::Rectangle<int> probeRect)
     }
 
     const auto outDir = getOutputFolder();
-    sessionName = juce::String (syncTest ? "SyncTest_" : "ScreenRec_")
+    sessionName = juce::String (syncTest ? "SyncTest_" : (getMode() == Mode::reels ? "Reels_" : "ScreenRec_"))
                 + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
     sessionTempDir = outDir.getChildFile (".temp").getChildFile (sessionName);
     sessionOutput = outDir.getChildFile (sessionName + ".mp4");
@@ -449,8 +450,10 @@ void Recorder::runStart (bool syncTest, juce::Rectangle<int> probeRect)
     const juce::String enc = getEncoderName();
     log ("video encoder: " + enc);
 
+    const bool reels = ! syncTest && getMode() == Mode::reels;
     capture = std::make_unique<ScreenCapture>();
-    if (! capture->open())
+    capture->setRegionSource (reelsFrame);
+    if (! capture->open (reels))
     {
         fail ("Cannot read screen size");
         return;
@@ -458,7 +461,7 @@ void Recorder::runStart (bool syncTest, juce::Rectangle<int> probeRect)
 
     log ("screen " + juce::String (capture->getNativeWidth()) + "x" + juce::String (capture->getNativeHeight())
          + " -> " + juce::String (capture->getOutputWidth()) + "x" + juce::String (capture->getOutputHeight())
-         + " @ " + juce::String (ScreenCapture::fps) + " fps");
+         + " @ " + juce::String (ScreenCapture::fps) + " fps" + (reels ? "  [REELS]" : "  [FULL]"));
 
     if (syncTest && ! probeRect.isEmpty())
     {
@@ -937,4 +940,72 @@ void Recorder::saveSyncOffset (double ms)
     syncOffsetMs = ms;
     const auto f = getOutputFolder().getChildFile ("sync_offset_ms.txt");
     f.replaceWithText (juce::String (ms, 1));
+}
+
+//==============================================================================
+// Settings (mode + REELS frame), stored next to the recordings.
+
+namespace
+{
+    juce::File settingsFile() { return Recorder::getOutputFolder().getChildFile ("settings.txt"); }
+}
+
+void Recorder::setMode (Mode m)
+{
+    if (isBusy())
+        return;
+
+    mode = (int) m;
+    saveSettings();
+}
+
+void Recorder::setReelsFrame (double cx, double cy, double h)
+{
+    reelsFrame[0] = juce::jlimit (0.0, 1.0, cx);
+    reelsFrame[1] = juce::jlimit (0.0, 1.0, cy);
+    reelsFrame[2] = juce::jlimit (0.05, 1.0, h);
+}
+
+void Recorder::getReelsFrame (double& cx, double& cy, double& h) const
+{
+    cx = reelsFrame[0].load();
+    cy = reelsFrame[1].load();
+    h  = reelsFrame[2].load();
+}
+
+void Recorder::loadSettings()
+{
+    const auto f = settingsFile();
+    if (! f.existsAsFile())
+        return;
+
+    juce::StringArray lines;
+    f.readLines (lines);
+
+    double cx = 0.5, cy = 0.5, h = 1.0;
+    for (auto& l : lines)
+    {
+        const auto key = l.upToFirstOccurrenceOf ("=", false, false).trim();
+        const auto val = l.fromFirstOccurrenceOf ("=", false, false).trim();
+
+        if (key == "mode")          mode = (val == "reels") ? 1 : 0;
+        else if (key == "reels_cx") cx = val.getDoubleValue();
+        else if (key == "reels_cy") cy = val.getDoubleValue();
+        else if (key == "reels_h")  h  = val.getDoubleValue();
+    }
+
+    setReelsFrame (cx, cy, h);
+}
+
+void Recorder::saveSettings()
+{
+    getOutputFolder().createDirectory();
+
+    juce::String t;
+    t << "mode=" << (getMode() == Mode::reels ? "reels" : "full") << "\r\n"
+      << "reels_cx=" << juce::String (reelsFrame[0].load(), 5) << "\r\n"
+      << "reels_cy=" << juce::String (reelsFrame[1].load(), 5) << "\r\n"
+      << "reels_h="  << juce::String (reelsFrame[2].load(), 5) << "\r\n";
+
+    settingsFile().replaceWithText (t);
 }

@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 #include "Timing.h"
+#include "ReelsOverlay.h"
+#include "WinUtils.h"
 
 namespace
 {
@@ -19,18 +21,56 @@ namespace
 }
 
 ScreenRecEditor::ScreenRecEditor (ScreenRecProcessor& p)
-    : AudioProcessorEditor (&p), recorder (p.recorder)
+    : AudioProcessorEditor (&p), processor (p), recorder (p.recorder)
 {
     addChildComponent (flash);
     flash.setInterceptsMouseClicks (false, false);
     setSize (440, 230);
     recorder.warmUp();
+
+    if (processor.overlay == nullptr)
+        processor.overlay = std::make_unique<ReelsOverlay> (recorder);
+    processor.overlay->setEditorOpen (true);
+
     startTimerHz (30);
 }
 
 ScreenRecEditor::~ScreenRecEditor()
 {
     stopTimer();
+    updateCaptureExclusion (false);
+
+    if (processor.overlay != nullptr)
+        processor.overlay->setEditorOpen (false);
+}
+
+// Hide the whole plugin window from the recording (it stays visible on the
+// monitor). Only the plugin's own floating window is touched: if the top-level
+// window is much bigger than the editor (e.g. a docked layout), nothing is done.
+void ScreenRecEditor::updateCaptureExclusion (bool exclude)
+{
+    void* root = nullptr;
+
+    if (exclude)
+        if (auto* peer = getPeer())
+        {
+            root = WinUtils::getTopLevelWindow (peer->getNativeHandle());
+
+            int w = 0, h = 0;
+            const double scale = juce::Component::getApproximateScaleFactorForComponent (this);
+            const int maxW = (int) ((getWidth() + 400) * scale), maxH = (int) ((getHeight() + 400) * scale);
+
+            if (! WinUtils::getWindowSize (root, w, h) || w > maxW || h > maxH)
+                root = nullptr;
+        }
+
+    if (root == excludedRoot)
+        return;
+
+    if (excludedRoot != nullptr)
+        WinUtils::setExcludedFromCapture (excludedRoot, false);
+
+    excludedRoot = (root != nullptr && WinUtils::setExcludedFromCapture (root, true)) ? root : nullptr;
 }
 
 void ScreenRecEditor::resized()
@@ -38,6 +78,8 @@ void ScreenRecEditor::resized()
     recButtonArea = { 28, 62, 104, 104 };
     timeArea = { 156, 78, 260, 64 };
     syncArea = { getWidth() - 112, getHeight() - 34, 96, 22 };
+    fullArea = { 156, 148, 62, 22 };
+    reelsArea = { 222, 148, 62, 22 };
     flash.setBounds (timeArea);
 }
 
@@ -119,6 +161,32 @@ void ScreenRecEditor::paint (juce::Graphics& g)
         g.drawText (formatTime (recorder.getElapsedSeconds()), timeArea, juce::Justification::centredLeft);
     }
 
+    // ---- FULL / REELS
+    const bool modeEnabled = ! recording && ! busy;
+    const bool reels = recorder.getMode() == Recorder::Mode::reels;
+
+    auto drawSeg = [&] (juce::Rectangle<int> r, const juce::String& label, bool selected, bool hover)
+    {
+        const auto rf = r.toFloat().reduced (0.5f);
+        if (selected)
+        {
+            g.setColour (amber.withAlpha (modeEnabled ? 0.9f : 0.45f));
+            g.fillRoundedRectangle (rf, 4.0f);
+            g.setColour (bg);
+        }
+        else
+        {
+            g.setColour (modeEnabled && hover ? amber : line.brighter (0.3f));
+            g.drawRoundedRectangle (rf, 4.0f, 1.0f);
+            g.setColour (modeEnabled ? dimText : line.brighter (0.3f));
+        }
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText (label, r, juce::Justification::centred);
+    };
+
+    drawSeg (fullArea, "FULL", ! reels, hoverFull);
+    drawSeg (reelsArea, "REELS", reels, hoverReels);
+
     // ---- status + sync
     g.setColour (line);
     g.drawHorizontalLine (getHeight() - 44, 0.0f, (float) getWidth());
@@ -145,11 +213,15 @@ void ScreenRecEditor::mouseMove (const juce::MouseEvent& e)
     const bool r = recButtonArea.toFloat().contains (e.position)
                 && e.position.getDistanceFrom (recButtonArea.getCentre().toFloat()) < recButtonArea.getWidth() * 0.5f;
     const bool s = syncArea.contains (e.getPosition());
+    const bool f = fullArea.contains (e.getPosition());
+    const bool rl = reelsArea.contains (e.getPosition());
 
-    if (r != hoverRec || s != hoverSync)
+    if (r != hoverRec || s != hoverSync || f != hoverFull || rl != hoverReels)
     {
         hoverRec = r;
         hoverSync = s;
+        hoverFull = f;
+        hoverReels = rl;
         repaint();
     }
 }
@@ -169,8 +241,17 @@ void ScreenRecEditor::mouseUp (const juce::MouseEvent& e)
              && (state == Recorder::State::idle || state == Recorder::State::error))
     {
         flash.on = false;
-        flash.setVisible (true);   // must be on screen before the probe rect is taken
+        flash.setVisible (true);         // must be on screen before the probe rect is taken
+        updateCaptureExclusion (false);  // the test has to see this window
         recorder.start (true, physicalScreenRectOf (flash));
+    }
+    else if (fullArea.contains (e.getPosition()) && ! recorder.isBusy())
+    {
+        recorder.setMode (Recorder::Mode::full);
+    }
+    else if (reelsArea.contains (e.getPosition()) && ! recorder.isBusy())
+    {
+        recorder.setMode (Recorder::Mode::reels);
     }
 
     repaint();
@@ -184,6 +265,8 @@ void ScreenRecEditor::timerCallback()
 
     if (flash.isVisible() != testRunning)
         flash.setVisible (testRunning);
+
+    updateCaptureExclusion (! (recorder.isSyncTest() && recorder.isBusy()));
 
     if (testRunning)
     {

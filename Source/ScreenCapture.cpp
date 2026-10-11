@@ -117,7 +117,7 @@ ScreenCapture::~ScreenCapture()
         stop();
 }
 
-bool ScreenCapture::open()
+bool ScreenCapture::open (bool reelsMode)
 {
     PhysicalPixelScope physical;
     nativeW = GetSystemMetrics (SM_CXSCREEN);
@@ -126,8 +126,19 @@ bool ScreenCapture::open()
     if (nativeW <= 0 || nativeH <= 0)
         return false;
 
-    outH = 1080;
-    outW = (int) std::lround ((double) nativeW * 1080.0 / (double) nativeH / 2.0) * 2;
+    reels = reelsMode;
+
+    if (reels)
+    {
+        outW = 1080;
+        outH = 1920;
+    }
+    else
+    {
+        outH = 1080;
+        outW = (int) std::lround ((double) nativeW * 1080.0 / (double) nativeH / 2.0) * 2;
+    }
+
     return true;
 }
 
@@ -212,12 +223,17 @@ void ScreenCapture::captureLoop()
     SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
     HDC screen = GetDC (nullptr);
-    const bool scaling = (nativeW != outW || nativeH != outH);
+    const bool scaling = reels || (nativeW != outW || nativeH != outH);
+
+    // REELS: largest possible region is full screen height at 9:16.
+    const int maxRegionH = nativeH;
+    const int maxRegionW = std::min (nativeW, (int) std::lround (nativeH * 9.0 / 16.0));
 
     DibSurface native, out;
     bool ok = out.create (screen, outW, outH);
     if (ok && scaling)
-        ok = native.create (screen, nativeW, nativeH);
+        ok = reels ? native.create (screen, maxRegionW, maxRegionH)
+                   : native.create (screen, nativeW, nativeH);
 
     if (! ok)
     {
@@ -229,7 +245,42 @@ void ScreenCapture::captureLoop()
     SetStretchBltMode (out.dc, HALFTONE);
     SetBrushOrgEx (out.dc, 0, 0, nullptr);
 
-    const double sx = (double) outW / nativeW, sy = (double) outH / nativeH;
+    // Current capture region in physical pixels (whole screen for FULL).
+    int rx = 0, ry = 0, rw = nativeW, rh = nativeH;
+
+    // REELS camera smoothing state (physical pixels).
+    double sCx = 0.0, sCy = 0.0, sH = 0.0;
+    bool smoothInit = false;
+
+    auto updateRegion = [&]
+    {
+        if (! reels || region == nullptr)
+            return;
+
+        const double tCx = std::clamp (region[0].load(), 0.0, 1.0) * nativeW;
+        const double tCy = std::clamp (region[1].load(), 0.0, 1.0) * nativeH;
+        const double tH  = std::clamp (region[2].load(), 0.05, 1.0) * nativeH;
+
+        if (! smoothInit)
+        {
+            sCx = tCx; sCy = tCy; sH = tH;
+            smoothInit = true;
+        }
+        else
+        {
+            constexpr double k = 0.22;   // ~150 ms glide at 30 fps
+            sCx += (tCx - sCx) * k;
+            sCy += (tCy - sCy) * k;
+            sH  += (tH  - sH)  * k;
+        }
+
+        rh = std::clamp ((int) std::lround (sH), 16, maxRegionH);
+        rw = std::clamp ((int) std::lround (rh * 9.0 / 16.0), 9, maxRegionW);
+        rh = std::min (rh, (int) std::lround (rw * 16.0 / 9.0));
+        rx = std::clamp ((int) std::lround (sCx - rw * 0.5), 0, nativeW - rw);
+        ry = std::clamp ((int) std::lround (sCy - rh * 0.5), 0, nativeH - rh);
+    };
+
     const int64_t freq = Timing::frequency();
     CursorCache cursor;
     float lastProbe = 0.0f;
@@ -281,12 +332,15 @@ void ScreenCapture::captureLoop()
             }
         }
 
+        updateRegion();
+        const double sx = (double) outW / rw, sy = (double) outH / rh;
+
         if (bufferIndex >= 0)
         {
             if (scaling)
             {
-                BitBlt (native.dc, 0, 0, nativeW, nativeH, screen, 0, 0, SRCCOPY | CAPTUREBLT);
-                StretchBlt (out.dc, 0, 0, outW, outH, native.dc, 0, 0, nativeW, nativeH, SRCCOPY);
+                BitBlt (native.dc, 0, 0, rw, rh, screen, rx, ry, SRCCOPY | CAPTUREBLT);
+                StretchBlt (out.dc, 0, 0, outW, outH, native.dc, 0, 0, rw, rh, SRCCOPY);
             }
             else
             {
@@ -298,8 +352,8 @@ void ScreenCapture::captureLoop()
             if (GetCursorInfo (&ci) && (ci.flags & CURSOR_SHOWING) && ci.hCursor != nullptr)
             {
                 cursor.update (ci.hCursor);
-                const int cx = (int) std::lround ((ci.ptScreenPos.x - cursor.hotX) * sx);
-                const int cy = (int) std::lround ((ci.ptScreenPos.y - cursor.hotY) * sy);
+                const int cx = (int) std::lround ((ci.ptScreenPos.x - cursor.hotX - rx) * sx);
+                const int cy = (int) std::lround ((ci.ptScreenPos.y - cursor.hotY - ry) * sy);
                 const int cw = std::max (8, (int) std::lround (cursor.w * sx));
                 const int ch = std::max (8, (int) std::lround (cursor.h * sy));
                 DrawIconEx (out.dc, cx, cy, ci.hCursor, cw, ch, 0, nullptr, DI_NORMAL);
@@ -374,7 +428,7 @@ void ScreenCapture::writerLoop()
 #else  // non-Windows stub
 
 ScreenCapture::~ScreenCapture() {}
-bool ScreenCapture::open() { return false; }
+bool ScreenCapture::open (bool) { return false; }
 void ScreenCapture::setProbeRect (int, int, int, int) {}
 std::vector<float> ScreenCapture::getProbeSamples() const { return {}; }
 bool ScreenCapture::start (const std::wstring&, const std::wstring&) { return false; }

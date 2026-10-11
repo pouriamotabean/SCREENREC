@@ -2,11 +2,13 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Recorder.h"
 
+class ReelsOverlay;
+
 class ScreenRecProcessor : public juce::AudioProcessor
 {
 public:
     ScreenRecProcessor();
-    ~ScreenRecProcessor() override = default;
+    ~ScreenRecProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -32,6 +34,7 @@ public:
     void setStateInformation (const void*, int) override {}
 
     Recorder recorder;
+    std::unique_ptr<ReelsOverlay> overlay;   // created by the editor (message thread)
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ScreenRecProcessor)

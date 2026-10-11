@@ -9,9 +9,11 @@
 #include <vector>
 #include "WinProcess.h"
 
-// Captures the whole primary screen (with mouse cursor) at a fixed 30 fps grid
-// driven by the shared high-resolution clock, scales it to 1080p and pipes raw
-// BGRA frames into ffmpeg for encoding.
+// Captures the primary screen (with mouse cursor) at a fixed 30 fps grid driven
+// by the shared high-resolution clock and pipes raw BGRA frames into ffmpeg.
+//  - FULL:  whole screen scaled to 1080p height.
+//  - REELS: a moving 9:16 region of the screen (live position/zoom, smoothed
+//           like a camera) scaled to 1080x1920.
 //
 // Timeline guarantee: frame n of the output file always represents the screen
 // at time startTicks + n / 30 s. If a capture is late, the previous image is
@@ -25,7 +27,11 @@ public:
     ~ScreenCapture();
 
     // Measures the screen and decides the output size. Call before start().
-    bool open();
+    bool open (bool reelsMode = false);
+
+    // REELS: three atomics {centreX, centreY, height} as fractions of the
+    // screen (x of width, y and height of height). Read every frame.
+    void setRegionSource (const std::atomic<double>* cxCyH) { region = cxCyH; }
     int getOutputWidth() const   { return outW; }
     int getOutputHeight() const  { return outH; }
     int getNativeWidth() const   { return nativeW; }
@@ -56,6 +62,8 @@ private:
     struct Item { int buffer; bool end; };
 
     int nativeW = 0, nativeH = 0, outW = 0, outH = 0;
+    bool reels = false;
+    const std::atomic<double>* region = nullptr;
 
     WinProcess ffmpeg;
     std::thread captureThread, writerThread;

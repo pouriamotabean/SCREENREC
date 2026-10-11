@@ -17,6 +17,7 @@ public:
 private:
     void timerCallback() override;
     juce::Rectangle<int> physicalScreenRectOf (const juce::Component&) const;
+    void updateCaptureExclusion (bool exclude);
 
     struct FlashPanel : juce::Component
     {
@@ -27,11 +28,13 @@ private:
         }
     };
 
+    ScreenRecProcessor& processor;
     Recorder& recorder;
     FlashPanel flash;
 
-    juce::Rectangle<int> recButtonArea, syncArea, timeArea;
-    bool hoverRec = false, hoverSync = false;
+    juce::Rectangle<int> recButtonArea, syncArea, timeArea, fullArea, reelsArea;
+    bool hoverRec = false, hoverSync = false, hoverFull = false, hoverReels = false;
+    void* excludedRoot = nullptr;   // top-level window currently hidden from capture
     int fastTimerTicks = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ScreenRecEditor)
